@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <VL53L0X.h>
 #include <Servo.h>
+#include <EEPROM.h>
 
 // LCD setup
 const int rs = 12, en = 11, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
@@ -21,6 +22,10 @@ const int servoStepForward = 15;
 const int servoStepBack = 5;
 const int servoWinThreshold = 150;
 bool gameWon = false;
+
+// Scoreboard
+int score = 0;
+int highScore = 0;
 
 // Game elements
 const int screenWidth = 16;
@@ -57,6 +62,9 @@ void setup() {
   flapServo.attach(10);
   flapServo.write(servoPos);
 
+  highScore = EEPROM.read(0);
+  if (highScore > 250) highScore = 0;
+  
   lcd.clear();
   lcd.print("INIT SENSOR...");
   delay(500);
@@ -95,6 +103,11 @@ void loop() {
     birdPixel = map(dist, 300, 50, 0, 15);
     lastDist = dist;
   }
+  
+  // Display score
+  int scoreCol = 16 - String(score).length();  // +2 for "S:"
+  lcd.setCursor(scoreCol, 0);
+  lcd.print(score);
 
   // Move pipe
   pipeX--;
@@ -136,6 +149,7 @@ void loop() {
       digitalWrite(redLED, LOW);
     } else if (!passedPipe) {
       // Success: servo step forward
+      score++;
       passedPipe = true;
       servoPos += servoStepForward;
       servoPos = constrain(servoPos, 0, 180);
@@ -182,5 +196,16 @@ void resetGame() {
   lastFrame = millis();
 }
 
+/*if (score > highScore) { // logs high scores
+    highScore = score;
+    EEPROM.write(0, highScore);
+  }
 
-
+  lcd.clear();
+  lcd.setCursor(3, 0);
+  lcd.print("GAME OVER");
+  lcd.setCursor(0, 1);
+  lcd.print("Score:");
+  lcd.print(score);
+  //lcd.print(" High:");
+  //lcd.print(highScore);*/
