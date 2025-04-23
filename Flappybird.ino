@@ -2,6 +2,8 @@
 #include <Wire.h>
 #include <VL53L0X.h>
 #include <Servo.h>
+#include <EEPROM.h>
+
 
 // LCD setup
 const int rs = 12, en = 11, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
@@ -22,27 +24,26 @@ const int servoStepBack = 5;
 const int servoWinThreshold = 150;
 bool gameWon = false;
 
+// Scoreboard
+int score = 0;
+int highScore = 0;
+
+
 // Game elements
 const int screenWidth = 16;
-byte pipeTop3[8] = {
-  B11111, B11111, B11111,
-  B00000, B00000, B00000,
-  B00000, B00000
-};
-byte pipeBottom3[8] = {
-  B00000, B00000, B00000,
-  B00000, B00000, B11111,
-  B11111, B11111
-};
 byte birdChar[8];
 int birdPixel = 4;
 unsigned long lastFrame = 0;
-int frameDelay =400;
+int frameDelay = 400;
 int pipeX = screenWidth - 1;
 int pipeGapY = 6;
 bool passedPipe = false;
 int lastDist = 0;
 const int resetThreshold = 50;
+
+// Pipe arrays (to be updated dynamically)
+byte pipeTop[8];
+byte pipeBottom[8];
 
 void setup() {
   lcd.begin(16, 2);
@@ -57,6 +58,10 @@ void setup() {
   flapServo.attach(10);
   flapServo.write(servoPos);
 
+  highScore = EEPROM.read(0);
+  if (highScore > 250) highScore = 0;
+
+
   lcd.clear();
   lcd.print("INIT SENSOR...");
   delay(500);
@@ -66,8 +71,6 @@ void setup() {
   sensor.startContinuous();
 
   lcd.clear();
-  lcd.createChar(1, pipeTop3);
-  lcd.createChar(2, pipeBottom3);
 }
 
 void loop() {
@@ -96,20 +99,41 @@ void loop() {
     lastDist = dist;
   }
 
+
+//  // Display score
+//   int scoreCol = 16 - String(score).length();  // +2 for "S:"
+//   lcd.setCursor(scoreCol, 0);
+//   lcd.print(score);
+
   // Move pipe
   pipeX--;
   if (pipeX < 0) {
     pipeX = screenWidth - 1;
-    pipeGapY = random(2, 10);
+
+    // Randomize pipe heights (top and bottom)
+    int topPipeHeight = random(1, 5); // Random height for top pipe (1 to 4)
+    int bottomPipeHeight = random(5, 9); // Random height for bottom pipe (5 to 8)
+
+    // Define the gap position based on the top pipe's height
+    pipeGapY = random(topPipeHeight + 1, bottomPipeHeight - 1); // Ensures a valid gap
+
+    // Create dynamic byte arrays for top and bottom pipes
+    createPipeBytes(topPipeHeight, bottomPipeHeight);
+
     passedPipe = false;
   }
+
+
 
   // Draw scene
   lcd.clear();
   for (int col = 0; col < screenWidth; col++) {
     if (col == pipeX) {
+      // Draw top pipe using dynamically created byte array
       lcd.setCursor(col, 0);
       lcd.write(byte(1));
+
+      // Draw bottom pipe using dynamically created byte array
       lcd.setCursor(col, 1);
       lcd.write(byte(2));
     }
@@ -127,6 +151,7 @@ void loop() {
   if (pipeX == 4) {
     if (birdPixel < pipeGapY || birdPixel > pipeGapY + 3) {
       // Crash: servo step back
+      score--;
       servoPos -= servoStepBack;
       servoPos = constrain(servoPos, 0, 180);
       flapServo.write(servoPos);
@@ -134,9 +159,10 @@ void loop() {
       digitalWrite(redLED, HIGH);
       delay(100);
       digitalWrite(redLED, LOW);
-    } else if (!passedPipe) {
-      // Success: servo step forward
-      passedPipe = true;
+      
+    } else { // Success: servo step forward
+
+      score++;
       servoPos += servoStepForward;
       servoPos = constrain(servoPos, 0, 180);
       flapServo.write(servoPos);
@@ -150,6 +176,30 @@ void loop() {
       }
     }
   }
+    adjustFrameDelay();
+
+}
+
+void createPipeBytes(int topHeight, int bottomHeight) {
+  // Reset pipe arrays
+  for (int i = 0; i < 8; i++) {
+    pipeTop[i] = B00000;
+    pipeBottom[i] = B00000;
+  }
+
+  // Set the top pipe based on the random height
+  for (int i = 0; i < topHeight; i++) {
+    pipeTop[i] = B11111; // Fill top pipe part with ones (active pixels)
+  }
+
+  // Set the bottom pipe based on the random height
+  for (int i = 8 - bottomHeight; i < 8; i++) {
+    pipeBottom[i] = B11111; // Fill bottom pipe part with ones (active pixels)
+  }
+
+  // Create custom LCD characters for pipe top and bottom
+  lcd.createChar(1, pipeTop);
+  lcd.createChar(2, pipeBottom);
 }
 
 void makeBirdChar(int pixelY) {
@@ -170,6 +220,7 @@ void winGame() {
 }
 
 void resetGame() {
+  score = 0;
   gameWon = false;
   pipeX = screenWidth - 1;
   pipeGapY = random(2, 10);
@@ -183,4 +234,14 @@ void resetGame() {
 }
 
 
-
+void adjustFrameDelay() {
+  if (score >= 5) {
+    frameDelay = max(200, frameDelay - 10);  // Decrease frameDelay by 10ms for every 10 points, but not below 200ms
+  }
+  if (score >= 10) {
+    frameDelay = max(150, frameDelay - 15);  // Decrease frameDelay further for higher score, but not below 150ms
+  }
+  if (score >= 15) {
+    frameDelay = max(100, frameDelay - 20);  // Decrease more at higher score, but not below 100ms
+  }
+}
