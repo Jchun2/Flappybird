@@ -151,7 +151,8 @@ void loop() {
   if (pipeX == 4) {
     if (birdPixel < pipeGapY || birdPixel > pipeGapY + 3) {
       // Crash: servo step back
-      score--;
+      if(score>0) {score--;}
+      else {score=0}
       servoPos -= servoStepBack;
       servoPos = constrain(servoPos, 0, 180);
       flapServo.write(servoPos);
