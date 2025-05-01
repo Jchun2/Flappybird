@@ -4,7 +4,6 @@
 #include <Servo.h>
 #include <EEPROM.h>
 
-
 // LCD setup
 const int rs = 12, en = 11, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
 LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
@@ -28,7 +27,6 @@ bool gameWon = false;
 int score = 0;
 int highScore = 0;
 
-
 // Game elements
 const int screenWidth = 16;
 byte birdChar[8];
@@ -37,11 +35,12 @@ unsigned long lastFrame = 0;
 int frameDelay = 400;
 int pipeX = screenWidth - 1;
 int pipeGapY = 6;
+int pipeGapSize = 4;
 bool passedPipe = false;
 int lastDist = 0;
 const int resetThreshold = 50;
 
-// Pipe arrays (to be updated dynamically)
+// Pipe arrays
 byte pipeTop[8];
 byte pipeBottom[8];
 
@@ -61,7 +60,6 @@ void setup() {
   highScore = EEPROM.read(0);
   if (highScore > 250) highScore = 0;
 
-
   lcd.clear();
   lcd.print("INIT SENSOR...");
   delay(500);
@@ -76,7 +74,6 @@ void setup() {
 void loop() {
   int dist = sensor.readRangeContinuousMillimeters();
 
-  // Allow movement reset only after win
   if (gameWon) {
     if (!sensor.timeoutOccurred()) {
       int diff = abs(dist - lastDist);
@@ -88,58 +85,43 @@ void loop() {
     return;
   }
 
-  // Frame limiter
   if (millis() - lastFrame < frameDelay) return;
   lastFrame = millis();
 
-  // Bird height from hand distance
   if (!sensor.timeoutOccurred()) {
     dist = constrain(dist, 50, 300);
     birdPixel = map(dist, 300, 50, 0, 15);
     lastDist = dist;
   }
 
-
-//  // Display score
-//   int scoreCol = 16 - String(score).length();  // +2 for "S:"
-//   lcd.setCursor(scoreCol, 0);
-//   lcd.print(score);
-
-  // Move pipe
   pipeX--;
   if (pipeX < 0) {
     pipeX = screenWidth - 1;
 
-    // Randomize pipe heights (top and bottom)
-    int topPipeHeight = random(1, 5); // Random height for top pipe (1 to 4)
-    int bottomPipeHeight = random(5, 9); // Random height for bottom pipe (5 to 8)
+    // 🌟 UPDATED PIPE GAP LOGIC
+    const int minGap = 3;
+    const int maxGap = 5;
+    pipeGapSize = random(minGap, maxGap + 1);  // random gap size
+    pipeGapY = random(2, 13 - pipeGapSize);    // random position for the gap
 
-    // Define the gap position based on the top pipe's height
-    pipeGapY = random(topPipeHeight + 1, bottomPipeHeight - 1); // Ensures a valid gap
+    int topPipeHeight = pipeGapY;
+    int bottomPipeHeight = 16 - (pipeGapY + pipeGapSize);
 
-    // Create dynamic byte arrays for top and bottom pipes
     createPipeBytes(topPipeHeight, bottomPipeHeight);
 
     passedPipe = false;
   }
 
-
-
-  // Draw scene
   lcd.clear();
   for (int col = 0; col < screenWidth; col++) {
     if (col == pipeX) {
-      // Draw top pipe using dynamically created byte array
       lcd.setCursor(col, 0);
       lcd.write(byte(1));
-
-      // Draw bottom pipe using dynamically created byte array
       lcd.setCursor(col, 1);
       lcd.write(byte(2));
     }
   }
 
-  // Draw bird
   int birdRow = (birdPixel < 8) ? 0 : 1;
   int birdOffset = birdPixel % 8;
   makeBirdChar(birdOffset);
@@ -147,12 +129,10 @@ void loop() {
   lcd.setCursor(4, birdRow);
   lcd.write(byte(3));
 
-  // Collision / progress
   if (pipeX == 4) {
-    if (birdPixel < pipeGapY || birdPixel > pipeGapY + 3) {
-      // Crash: servo step back
-      if(score>0) {score--;}
-      else {score=0}
+    if (birdPixel < pipeGapY || birdPixel > (pipeGapY + pipeGapSize - 1)) {
+      if(score > 0) { score--; }
+      else { score = 0; }
       servoPos -= servoStepBack;
       servoPos = constrain(servoPos, 0, 180);
       flapServo.write(servoPos);
@@ -160,9 +140,8 @@ void loop() {
       digitalWrite(redLED, HIGH);
       delay(100);
       digitalWrite(redLED, LOW);
-      
-    } else { // Success: servo step forward
-
+    } 
+    else { 
       score++;
       servoPos += servoStepForward;
       servoPos = constrain(servoPos, 0, 180);
@@ -177,28 +156,25 @@ void loop() {
       }
     }
   }
-    adjustFrameDelay();
 
+  adjustFrameDelay();
 }
 
 void createPipeBytes(int topHeight, int bottomHeight) {
-  // Reset pipe arrays
   for (int i = 0; i < 8; i++) {
     pipeTop[i] = B00000;
     pipeBottom[i] = B00000;
   }
 
-  // Set the top pipe based on the random height
-  for (int i = 0; i < topHeight; i++) {
-    pipeTop[i] = B11111; // Fill top pipe part with ones (active pixels)
+  for (int i = 0; i < 8; i++) {
+    if (i < topHeight && i < 8) {
+      pipeTop[i] = B11111;
+    }
+    if (i >= 8 - bottomHeight && i < 8) {
+      pipeBottom[i] = B11111;
+    }
   }
 
-  // Set the bottom pipe based on the random height
-  for (int i = 8 - bottomHeight; i < 8; i++) {
-    pipeBottom[i] = B11111; // Fill bottom pipe part with ones (active pixels)
-  }
-
-  // Create custom LCD characters for pipe top and bottom
   lcd.createChar(1, pipeTop);
   lcd.createChar(2, pipeBottom);
 }
@@ -234,15 +210,14 @@ void resetGame() {
   lastFrame = millis();
 }
 
-
 void adjustFrameDelay() {
   if (score >= 5) {
-    frameDelay = max(200, frameDelay - 10);  // Decrease frameDelay by 10ms for every 10 points, but not below 200ms
+    frameDelay = max(200, frameDelay - 10);
   }
   if (score >= 10) {
-    frameDelay = max(150, frameDelay - 15);  // Decrease frameDelay further for higher score, but not below 150ms
+    frameDelay = max(150, frameDelay - 15);
   }
   if (score >= 15) {
-    frameDelay = max(100, frameDelay - 20);  // Decrease more at higher score, but not below 100ms
+    frameDelay = max(100, frameDelay - 20);
   }
 }
