@@ -64,12 +64,10 @@ void setup() {
   lcd.clear();
   lcd.print("Have hand above sensor");
 
-  // ✅ Initialize sensor BEFORE trying to read from it
   sensor.init();
   sensor.setTimeout(500);
   sensor.startContinuous();
 
-  // ✅ Now that sensor is initialized, you can read distances
   threshold = countdownAndGetDistance();
 
   lcd.clear(); // Clear the LCD after countdown
