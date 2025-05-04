@@ -13,7 +13,7 @@ VL53L0X sensor;
 Servo flapServo;
 
 // LED pins
-const int redLED = 8;
+//const int redLED = 8;
 const int greenLED = 9;
 
 // Servo logic
@@ -44,14 +44,15 @@ const int resetThreshold = 50;
 byte pipeTop[8];
 byte pipeBottom[8];
 
+// Variable for threshold (starting distance for the bird)
+int threshold = 0;
+
 void setup() {
   lcd.begin(16, 2);
   Serial.begin(9600);
   Wire.begin();
 
-  pinMode(redLED, OUTPUT);
   pinMode(greenLED, OUTPUT);
-  digitalWrite(redLED, LOW);
   digitalWrite(greenLED, LOW);
 
   flapServo.attach(10);
@@ -61,15 +62,55 @@ void setup() {
   if (highScore > 250) highScore = 0;
 
   lcd.clear();
-  lcd.print("INIT SENSOR...");
-  delay(500);
+  lcd.print("Have hand above sensor");
 
+  // ✅ Initialize sensor BEFORE trying to read from it
   sensor.init();
   sensor.setTimeout(500);
   sensor.startContinuous();
 
-  lcd.clear();
+  // ✅ Now that sensor is initialized, you can read distances
+  threshold = countdownAndGetDistance();
+
+  lcd.clear(); // Clear the LCD after countdown
 }
+
+
+int countdownAndGetDistance() {
+  long totalDistance = 0;
+  int readings = 3; // We want to take 3 readings (for 3, 2, 1)
+
+  for (int i = 3; i > 0; i--) {
+    lcd.setCursor(7, 1);  // Position where the countdown is shown
+    lcd.print(i);         // Display the number
+    delay(1000);          // Wait for 1 second
+
+    // Take a reading from the sensor and accumulate it
+    int distance = getSensorReading();
+    totalDistance += distance;  // Add the distance to the total
+
+    lcd.setCursor(7, 1);  // Clear the countdown number
+    lcd.print(" ");       // Clear the number
+  }
+
+  // Calculate the average distance
+  int averageDistance = totalDistance / readings;
+  lcd.setCursor(7, 1);  // Clear the final space
+  lcd.print("GO!");     // Indicate the game is starting
+  delay(500);           // Pause before starting the game
+
+  return averageDistance; // Return the average distance
+}
+
+int getSensorReading() {
+  int distance = sensor.readRangeContinuousMillimeters();
+  // Handle potential timeout and return a safe default value
+  if (sensor.timeoutOccurred()) {
+    return 200; // Return a fallback value
+  }
+  return distance;
+}
+
 
 void loop() {
   int dist = sensor.readRangeContinuousMillimeters();
@@ -89,8 +130,10 @@ void loop() {
   lastFrame = millis();
 
   if (!sensor.timeoutOccurred()) {
-    dist = constrain(dist, 50, 300);
-    birdPixel = map(dist, 300, 50, 0, 15);
+    dist = constrain(dist, 50, 400);
+    int delta = constrain(dist - threshold, -150, 150);
+    if (abs(delta) < 10) delta = 0;  // Optional dead zone
+    birdPixel = map(delta, 150, -150, 0, 15);
     lastDist = dist;
   }
 
@@ -100,16 +143,17 @@ void loop() {
 
     const int minGap = 3;
     const int maxGap = 5;
-    pipeGapSize = random(minGap, maxGap + 1);
-    pipeGapY = random(2, 13 - pipeGapSize);
 
-    int topPipeHeight = pipeGapY;
-    int bottomPipeHeight = 16 - (pipeGapY + pipeGapSize);
+    pipeGapSize = random(minGap, maxGap + 1);
+    pipeGapY = random(1, 16 - pipeGapSize - 1); // full vertical space
+
+    int topPipeHeight = pipeGapY; // could be > 8
+    int bottomPipeHeight = 16 - (pipeGapY + pipeGapSize); // could be > 8
 
     createPipeBytes(topPipeHeight, bottomPipeHeight);
-
     passedPipe = false;
   }
+
 
   lcd.clear();
   for (int col = 0; col < screenWidth; col++) {
@@ -157,9 +201,9 @@ void loop() {
       servoPos = constrain(servoPos, 0, 180);
       flapServo.write(servoPos);
 
-      digitalWrite(redLED, HIGH);
+      //digitalWrite(redLED, HIGH);
       delay(100);
-      digitalWrite(redLED, LOW);
+      //digitalWrite(redLED, LOW);
     } else {
       score++;
       servoPos += servoStepForward;
@@ -180,16 +224,26 @@ void loop() {
 }
 
 void createPipeBytes(int topHeight, int bottomHeight) {
+  // Clear old pipe data
   for (int i = 0; i < 8; i++) {
     pipeTop[i] = B00000;
     pipeBottom[i] = B00000;
   }
 
+  // Fill top pipe data
   for (int i = 0; i < 8; i++) {
-    if (i < topHeight && i < 8) {
+    if (topHeight >= 8) {
+      pipeTop[i] = B11111; // full block
+    } else if (i < topHeight) {
       pipeTop[i] = B11111;
     }
-    if (i >= 8 - bottomHeight && i < 8) {
+  }
+
+  // Fill bottom pipe data
+  for (int i = 0; i < 8; i++) {
+    if (bottomHeight >= 8) {
+      pipeBottom[i] = B11111;
+    } else if (i >= 8 - bottomHeight) {
       pipeBottom[i] = B11111;
     }
   }
@@ -198,12 +252,17 @@ void createPipeBytes(int topHeight, int bottomHeight) {
   lcd.createChar(2, pipeBottom);
 }
 
-void makeBirdChar(int pixelY, bool onPipeRow, byte pipeData[8]) {
+void makeBirdChar(int pixelY, bool mergeWithPipe, byte pipeData[8]) {
   for (int i = 0; i < 8; i++) {
-    birdChar[i] = pipeData[i];  // Start with pipe pixels
+    // Start with either pipe pixels or empty pixels
+    byte base = mergeWithPipe ? pipeData[i] : B00000;
+
+    // If this row matches the bird's vertical position, add the bird pixel
     if (i == pixelY) {
-      birdChar[i] |= B00100;    // Add bird pixel in center column
+      base |= B00100;  // Bird pixel in the center column
     }
+
+    birdChar[i] = base;
   }
 }
 
@@ -227,7 +286,7 @@ void resetGame() {
   passedPipe = false;
   servoPos = 90;
   flapServo.write(servoPos);
-  digitalWrite(redLED, LOW);
+  //digitalWrite(redLED, LOW);
   lcd.clear();
   lastFrame = millis();
 }
