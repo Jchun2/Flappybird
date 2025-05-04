@@ -130,10 +130,26 @@ void loop() {
   lastFrame = millis();
 
   if (!sensor.timeoutOccurred()) {
-    dist = constrain(dist, 50, 400);
-    int delta = constrain(dist - threshold, -150, 150);
-    if (abs(delta) < 10) delta = 0;  // Optional dead zone
-    birdPixel = map(delta, 150, -150, 0, 15);
+    const int movementRange = 120; // total range around threshold (e.g. ±60 mm)
+    const int deadZone = 10;       // ignore jitter within ±10 mm
+
+    int topDist = threshold - movementRange / 2;
+    int bottomDist = threshold + movementRange / 2;
+
+    // Clamp the reading
+    dist = constrain(dist, topDist, bottomDist);
+
+    // Compute offset from center
+    int delta = dist - threshold;
+
+    // Apply dead zone
+    if (abs(delta) < deadZone) {
+      delta = 0;
+    }
+
+    // Map to screen pixel range
+    birdPixel = map(delta, movementRange / 2, -movementRange / 2, 0, 15);
+
     lastDist = dist;
   }
 
