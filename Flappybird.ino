@@ -13,7 +13,7 @@ VL53L0X sensor;
 Servo flapServo;
 
 // LED pins
-//const int redLED = 8;
+const int redLED = 8;
 const int greenLED = 9;
 
 // Servo logic
@@ -47,6 +47,66 @@ byte pipeBottom[8];
 // Variable for threshold (starting distance for the bird)
 int threshold = 0;
 
+void waitForHandToStart() {
+  const int triggerDistance = 500;  // mm — hand must be closer than this
+  const int requiredDuration = 3000; // 3 seconds in ms
+  const int barLength = 16;
+  const int updateInterval = 100;
+
+  unsigned long handStartTime = 0;
+  bool handPresent = false;
+  int progress = 0;
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("To start, hand");
+  lcd.setCursor(0, 1);
+  lcd.print("above the sensor");
+  delay(7000);
+
+  // the hand has to be over the sensor for 3 seconds to start the game
+  while (true) {
+    int dist = sensor.readRangeContinuousMillimeters();
+
+    if (!sensor.timeoutOccurred() && dist < triggerDistance) {
+      if (!handPresent) {
+        handStartTime = millis(); // ms since arduino began program
+        handPresent = true;
+      }
+
+      unsigned long heldTime = millis() - handStartTime;
+      progress = map(heldTime, 0, requiredDuration, 0, barLength);
+      progress = constrain(progress, 0, barLength);
+
+      // Draw progress bar
+      lcd.setCursor(0, 1);
+      for (int i = 0; i < barLength; i++) {
+        if (i < progress) lcd.print((char)255);  // Full blocks
+        else lcd.print(" ");
+      }
+
+      if (heldTime >= requiredDuration) break;
+    } else {
+      // Reset if hand removed
+      handPresent = false;
+      progress = 0;
+      lcd.setCursor(0, 1);
+      lcd.print("                "); // Clear bar
+    }
+
+    delay(updateInterval);
+  }
+
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Put your hand");
+  lcd.setCursor(0, 1);
+  lcd.print("at wanted height");
+  delay(3000);
+  lcd.clear();
+}
+
+
 void setup() {
   lcd.begin(16, 2);
   Serial.begin(9600);
@@ -57,18 +117,16 @@ void setup() {
 
   flapServo.attach(10);
   flapServo.write(servoPos);
-
-  highScore = EEPROM.read(0);
-  if (highScore > 250) highScore = 0;
-
-  lcd.clear();
-  lcd.print("Have hand above sensor");
+  // code if we wanted to implement a high score system
+  // highScore = EEPROM.read(0);
+  // if (highScore > 250) highScore = 0;
 
   sensor.init();
   sensor.setTimeout(500);
   sensor.startContinuous();
 
-  threshold = countdownAndGetDistance();
+  waitForHandToStart();  
+  threshold = countdownAndGetDistance();  // Continue setup
 
   lcd.clear(); // Clear the LCD after countdown
 }
@@ -76,26 +134,33 @@ void setup() {
 
 int countdownAndGetDistance() {
   long totalDistance = 0;
-  int readings = 3; // We want to take 3 readings (for 3, 2, 1)
-
+  int readings = 3; // We want to take 3 readings to average as the threshold for movement
+  lcd.setCursor(0, 0);
+  lcd.write("Stay still");
+  lcd.setCursor(0, 1);
+  lcd.write("for set up");
+  delay(3000);
   for (int i = 3; i > 0; i--) {
-    lcd.setCursor(7, 1);  // Position where the countdown is shown
-    lcd.print(i);         // Display the number
-    delay(1000);          // Wait for 1 second
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.write("Stay still");
+    lcd.setCursor(7, 1); 
+    lcd.print(i);       
+    delay(1000);         
 
     // Take a reading from the sensor and accumulate it
     int distance = getSensorReading();
-    totalDistance += distance;  // Add the distance to the total
+    totalDistance += distance;  
 
-    lcd.setCursor(7, 1);  // Clear the countdown number
-    lcd.print(" ");       // Clear the number
+    lcd.setCursor(7, 1);  
+    lcd.print(" ");       
   }
 
   // Calculate the average distance
   int averageDistance = totalDistance / readings;
-  lcd.setCursor(7, 1);  // Clear the final space
-  lcd.print("GO!");     // Indicate the game is starting
-  delay(500);           // Pause before starting the game
+  lcd.setCursor(7, 1);  
+  lcd.print("GO!");     
+  delay(500);        
 
   return averageDistance; // Return the average distance
 }
@@ -113,23 +178,31 @@ int getSensorReading() {
 void loop() {
   int dist = sensor.readRangeContinuousMillimeters();
 
+  // if they won the game, they have the option to play again
   if (gameWon) {
-    if (!sensor.timeoutOccurred()) {
-      int diff = abs(dist - lastDist);
-      lastDist = dist;
-      if (diff > resetThreshold) {
-        resetGame();
+    static unsigned long handStartTime = 0;
+    int dist = getSensorReading();
+
+    if (!sensor.timeoutOccurred() && dist < 500) {  // Hand detected
+      if (handStartTime == 0) {
+        handStartTime = millis();  // Start timer
+      } else if (millis() - handStartTime >= 3000) {
+        resetGame();  // Held for 3 seconds
+        handStartTime = 0;  // Reset timer
       }
+    } else {
+      handStartTime = 0;  // Reset if hand removed
     }
+
     return;
   }
 
-  if (millis() - lastFrame < frameDelay) return;
+  if (millis() - lastFrame < frameDelay) return; // so frame is not drawn too early
   lastFrame = millis();
 
   if (!sensor.timeoutOccurred()) {
-    const int movementRange = 120; // total range around threshold (e.g. ±60 mm)
-    const int deadZone = 10;       // ignore jitter within ±10 mm
+    const int movementRange = 120; // total range around threshold
+    const int deadZone = 10;       // ignore movement within ±10 mm
 
     int topDist = threshold - movementRange / 2;
     int bottomDist = threshold + movementRange / 2;
@@ -155,14 +228,16 @@ void loop() {
   if (pipeX < 0) {
     pipeX = screenWidth - 1;
 
-    const int minGap = 3;
-    const int maxGap = 5;
+    const int minGap = 2;
+    const int maxGap = 6;
 
-    pipeGapSize = random(minGap, maxGap + 1);
-    pipeGapY = random(1, 16 - pipeGapSize - 1); // full vertical space
+    int effectiveScore = constrain(score, -4, 4);
+    pipeGapSize = map(effectiveScore, -4, 4, maxGap, minGap);  // Higher score = smaller gap
 
-    int topPipeHeight = pipeGapY; // could be > 8
-    int bottomPipeHeight = 16 - (pipeGapY + pipeGapSize); // could be > 8
+    pipeGapY = random(1, 16 - pipeGapSize - 1);  // Ensure gap fits on screen
+
+    int topPipeHeight = pipeGapY; 
+    int bottomPipeHeight = 16 - (pipeGapY + pipeGapSize); 
 
     createPipeBytes(topPipeHeight, bottomPipeHeight);
     passedPipe = false;
@@ -183,6 +258,8 @@ void loop() {
   int birdOffset = birdPixel % 8;
 
   if (pipeX == 4) {
+    lcd.createChar(1, pipeTop);
+    lcd.createChar(2, pipeBottom);
     // Merge bird + pipe in bird row
     byte* pipeData = (birdRow == 0) ? pipeTop : pipeBottom;
     makeBirdChar(birdOffset, true, pipeData);
@@ -204,10 +281,12 @@ void loop() {
     lcd.write(byte(3));
   }
 
+  // score mechanism
   if (pipeX == 4) {
     if (birdPixel < pipeGapY || birdPixel > (pipeGapY + pipeGapSize - 1)) {
       if (score > 0) {
         score--;
+        frameDelay += 50;
       } else {
         score = 0;
       }
@@ -215,11 +294,12 @@ void loop() {
       servoPos = constrain(servoPos, 0, 180);
       flapServo.write(servoPos);
 
-      //digitalWrite(redLED, HIGH);
+      digitalWrite(redLED, HIGH);
       delay(100);
-      //digitalWrite(redLED, LOW);
+      digitalWrite(redLED, LOW);
     } else {
       score++;
+      frameDelay -= 50;
       servoPos += servoStepForward;
       servoPos = constrain(servoPos, 0, 180);
       flapServo.write(servoPos);
@@ -233,8 +313,6 @@ void loop() {
       }
     }
   }
-
-  adjustFrameDelay();
 }
 
 void createPipeBytes(int topHeight, int bottomHeight) {
@@ -268,12 +346,11 @@ void createPipeBytes(int topHeight, int bottomHeight) {
 
 void makeBirdChar(int pixelY, bool mergeWithPipe, byte pipeData[8]) {
   for (int i = 0; i < 8; i++) {
-    // Start with either pipe pixels or empty pixels
     byte base = mergeWithPipe ? pipeData[i] : B00000;
 
     // If this row matches the bird's vertical position, add the bird pixel
     if (i == pixelY) {
-      base |= B00100;  // Bird pixel in the center column
+      base |= B00100; 
     }
 
     birdChar[i] = base;
@@ -283,11 +360,10 @@ void makeBirdChar(int pixelY, bool mergeWithPipe, byte pipeData[8]) {
 void winGame() {
   gameWon = true;
   lcd.clear();
-  lcd.setCursor(3, 0);
-  lcd.print("YOU WIN!");
-  lcd.setCursor(1, 1);
-  lcd.print("Servo: ");
-  lcd.print(servoPos);
+  lcd.setCursor(0, 0);
+  lcd.print("YOU WIN! To play");
+  lcd.setCursor(0, 1);
+  lcd.print("again, hold 3s");
   flapServo.write(servoPos);
 }
 
@@ -299,20 +375,9 @@ void resetGame() {
   birdPixel = 4;
   passedPipe = false;
   servoPos = 90;
+  frameDelay = 400;
   flapServo.write(servoPos);
-  //digitalWrite(redLED, LOW);
+  digitalWrite(redLED, LOW);
   lcd.clear();
   lastFrame = millis();
-}
-
-void adjustFrameDelay() {
-  if (score >= 5) {
-    frameDelay = max(200, frameDelay - 10);
-  }
-  if (score >= 10) {
-    frameDelay = max(150, frameDelay - 15);
-  }
-  if (score >= 15) {
-    frameDelay = max(100, frameDelay - 20);
-  }
 }
